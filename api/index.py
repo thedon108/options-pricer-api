@@ -229,6 +229,22 @@ class handler(BaseHTTPRequestHandler):
                     'upper_expiry': upper_str,
                 }).encode())
 
+            elif path == '/api/search':
+                q = params.get('q', [''])[0].strip()
+                if not q:
+                    raise ValueError("Missing query parameter 'q'")
+                results = yf.Search(q, max_results=6).quotes
+                matches = [
+                    {
+                        'ticker': r.get('symbol', ''),
+                        'name': r.get('longname') or r.get('shortname', ''),
+                        'exchange': r.get('exchange', ''),
+                        'type': r.get('quoteType', ''),
+                    }
+                    for r in results if r.get('symbol')
+                ]
+                self.wfile.write(json.dumps({'results': matches}).encode())
+
             else:
                 self.wfile.write(json.dumps({'error': 'Unknown endpoint'}).encode())
 
