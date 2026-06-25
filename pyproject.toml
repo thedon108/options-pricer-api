@@ -1,2 +1,7 @@
+[project]
+name = "options-pricer-api"
+version = "0.1.0"
+dependencies = ["yfinance", "pandas", "numpy"]
+
 [tool.vercel]
 entrypoint = "api:handler"
