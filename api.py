@@ -31,15 +31,34 @@ def norm_pdf(x):
     return math.exp(-0.5 * x ** 2) / math.sqrt(2 * math.pi)
 
 def get_rfr(exchange):
-    rates = {
-        'NMS': None, 'NGM': None, 'NCM': None, 'NYQ': None,  # US - fetch ^IRX
-        'SGX': 0.030,
-        'HKG': 0.040,
-        'LSE': 0.042,
-        'TYO': 0.006,
-        'FRA': 0.025, 'XETR': 0.025,
+    # Yahoo Finance tickers for each country's short-term benchmark rate
+    yf_rate_tickers = {
+        'NMS': '^IRX',   # US 13-week T-bill
+        'NGM': '^IRX',
+        'NCM': '^IRX',
+        'NYQ': '^IRX',
+        'LSE': '^UKTYIELD',  # UK 2-year gilt
+        'SGX': '^SGXRATE',   # Singapore overnight rate
+        'HKG': '^HKIBBOR',  # HK interbank
+        'TYO': '^JPN2YT=RR', # Japan 2yr JGB
+        'FRA': '^EUR2YT=RR', # Eurozone 2yr
+        'XETR': '^EUR2YT=RR',
     }
-    return rates.get(exchange, None)
+    # Fallback hardcoded rates if live fetch fails
+    fallbacks = {
+        'LSE': 0.042, 'SGX': 0.030, 'HKG': 0.040,
+        'TYO': 0.006, 'FRA': 0.025, 'XETR': 0.025,
+    }
+    ticker = yf_rate_tickers.get(exchange)
+    if ticker:
+        try:
+            rate = yf.Ticker(ticker).fast_info.last_price
+            if rate and rate > 0:
+                # ^IRX is quoted as annualised %, others vary
+                return rate / 100
+        except Exception:
+            pass
+    return fallbacks.get(exchange, None)
 
 def interpolate_iv(iv1, t1, iv2, t2, t):
     var1 = iv1 ** 2 * t1
