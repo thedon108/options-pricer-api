@@ -177,6 +177,8 @@ class handler(BaseHTTPRequestHandler):
                 t = yf.Ticker(ticker)
                 S = t.fast_info.last_price
                 expiries = list(t.options)
+                if not expiries:
+                    raise ValueError(f"No listed options found for '{ticker}'")
                 T = (target - today).days / 365.0
 
                 # Find bracketing expiries
@@ -223,8 +225,10 @@ class handler(BaseHTTPRequestHandler):
                     def get_iv(rows):
                         if len(rows) > 0:
                             iv = rows.iloc[0]['impliedVolatility']
-                            return iv if iv > 0.01 else 0.3
-                        return 0.3
+                            if iv > 0.01:
+                                return iv, False
+                            return 0.3, True
+                        return 0.3, True
 
                     def get_market_price(rows):
                         if len(rows) > 0:
@@ -236,10 +240,10 @@ class handler(BaseHTTPRequestHandler):
                             return round(last, 2)
                         return None
 
-                    iv1_c = get_iv(lc_row)
-                    iv2_c = get_iv(uc_row)
-                    iv1_p = get_iv(lp_row)
-                    iv2_p = get_iv(up_row)
+                    iv1_c, fb1_c = get_iv(lc_row)
+                    iv2_c, fb2_c = get_iv(uc_row)
+                    iv1_p, fb1_p = get_iv(lp_row)
+                    iv2_p, fb2_p = get_iv(up_row)
 
                     iv_c = interpolate_iv(iv1_c, T1, iv2_c, T2, T)
                     iv_p = interpolate_iv(iv1_p, T1, iv2_p, T2, T)
@@ -261,6 +265,7 @@ class handler(BaseHTTPRequestHandler):
                         'iv': round(iv_c * 100, 2),
                         'iv_lower': round(iv1_c * 100, 2),
                         'iv_upper': round(iv2_c * 100, 2),
+                        'iv_fallback': fb1_c or fb2_c,
                         'delta': bs_c['delta'],
                         'gamma': bs_c['gamma'],
                         'theta': bs_c['theta'],
@@ -276,6 +281,7 @@ class handler(BaseHTTPRequestHandler):
                         'iv': round(iv_p * 100, 2),
                         'iv_lower': round(iv1_p * 100, 2),
                         'iv_upper': round(iv2_p * 100, 2),
+                        'iv_fallback': fb1_p or fb2_p,
                         'delta': bs_p['delta'],
                         'gamma': bs_p['gamma'],
                         'theta': bs_p['theta'],
