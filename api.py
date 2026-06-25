@@ -114,10 +114,13 @@ class handler(BaseHTTPRequestHandler):
             if path == '/api/quote':
                 ticker = params.get('ticker', [''])[0].upper()
                 t = yf.Ticker(ticker)
-                info = t.fast_info
-                price = info.last_price
+                try:
+                    info = t.fast_info
+                    price = info.last_price
+                except (KeyError, TypeError, AttributeError):
+                    raise ValueError(f"Ticker '{ticker}' not found — please check the symbol")
                 if price is None or not isinstance(price, (int, float)):
-                    raise ValueError(f"Ticker '{ticker}' not found or has no price data")
+                    raise ValueError(f"Ticker '{ticker}' not found — please check the symbol")
                 result = {
                     'ticker': ticker,
                     'price': round(price, 2),
