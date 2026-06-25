@@ -33,21 +33,44 @@ def norm_pdf(x):
 def get_rfr(exchange):
     # Yahoo Finance tickers for each country's short-term benchmark rate
     yf_rate_tickers = {
-        'NMS': '^IRX',   # US 13-week T-bill
-        'NGM': '^IRX',
-        'NCM': '^IRX',
-        'NYQ': '^IRX',
-        'LSE': '^UKTYIELD',  # UK 2-year gilt
-        'SGX': '^SGXRATE',   # Singapore overnight rate
-        'HKG': '^HKIBBOR',  # HK interbank
-        'TYO': '^JPN2YT=RR', # Japan 2yr JGB
-        'FRA': '^EUR2YT=RR', # Eurozone 2yr
+        # North America
+        'NMS': '^IRX', 'NGM': '^IRX', 'NCM': '^IRX', 'NYQ': '^IRX',
+        # Europe
+        'LSE':  '^UKTYIELD',   # UK 2yr gilt
+        'FRA':  '^EUR2YT=RR',  # Eurozone 2yr
         'XETR': '^EUR2YT=RR',
+        'CPH':  '^DKGYIELD',   # Denmark
+        'STO':  '^SEKGYIELD',  # Sweden
+        'OSL':  '^NOKGYIELD',  # Norway
+        'HEL':  '^EUR2YT=RR',  # Finland (Eurozone)
+        'AMS':  '^EUR2YT=RR',  # Netherlands
+        'BRU':  '^EUR2YT=RR',  # Belgium
+        'PAR':  '^EUR2YT=RR',  # Paris
+        'MCE':  '^EUR2YT=RR',  # Madrid
+        'MIL':  '^EUR2YT=RR',  # Milan
+        'VSE':  '^EUR2YT=RR',  # Vienna
+        'SWX':  '^CHFGYIELD',  # Switzerland
+        'VTX':  '^CHFGYIELD',
+        # Asia-Pacific
+        'TYO':  '^JPN2YT=RR',  # Japan
+        'OSA':  '^JPN2YT=RR',
+        'HKG':  '^HKIBBOR',    # Hong Kong
+        'SGX':  '^SGXRATE',    # Singapore
+        'ASX':  '^AUDGYIELD',  # Australia
+        'NZX':  '^NZDGYIELD',  # New Zealand
+        'BSE':  '^INRGYIELD',  # India BSE
+        'NSE':  '^INRGYIELD',  # India NSE
+        'KRX':  '^KR2YT=RR',   # South Korea
+        'TSE':  '^CA2YT=RR',   # Toronto
+        'CNQ':  '^CA2YT=RR',   # Canada
     }
-    # Fallback hardcoded rates if live fetch fails
+    # Hardcoded fallbacks if live fetch fails
     fallbacks = {
-        'LSE': 0.042, 'SGX': 0.030, 'HKG': 0.040,
-        'TYO': 0.006, 'FRA': 0.025, 'XETR': 0.025,
+        'LSE': 0.042, 'FRA': 0.025, 'XETR': 0.025, 'CPH': 0.028,
+        'STO': 0.025, 'OSL': 0.040, 'SWX': 0.012, 'VTX': 0.012,
+        'SGX': 0.030, 'HKG': 0.040, 'TYO': 0.005, 'OSA': 0.005,
+        'ASX': 0.042, 'NZX': 0.050, 'BSE': 0.065, 'NSE': 0.065,
+        'KRX': 0.035, 'TSE': 0.037, 'CNQ': 0.037,
     }
     ticker = yf_rate_tickers.get(exchange)
     if ticker:
@@ -57,7 +80,14 @@ def get_rfr(exchange):
                 return rate / 100
         except Exception:
             pass
-    return fallbacks.get(exchange, None)
+    fb = fallbacks.get(exchange)
+    if fb is not None:
+        return fb
+    # True catch-all: use US T-bill as last resort
+    try:
+        return yf.Ticker('^IRX').fast_info.last_price / 100
+    except Exception:
+        return 0.045
 
 def interpolate_iv(iv1, t1, iv2, t2, t):
     var1 = iv1 ** 2 * t1
