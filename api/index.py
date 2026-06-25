@@ -233,7 +233,13 @@ class handler(BaseHTTPRequestHandler):
                 q = params.get('q', [''])[0].strip()
                 if not q:
                     raise ValueError("Missing query parameter 'q'")
-                results = yf.Search(q, max_results=6).quotes
+                results = yf.Search(q, max_results=10).quotes
+                us_exchanges = {'NMS', 'NGM', 'NCM', 'NYQ', 'NYSEArca', 'NASDAQ', 'NYSE'}
+                def exchange_score(r):
+                    if r.get('exchange', '') in us_exchanges: return 0
+                    if r.get('quoteType', '') == 'EQUITY': return 1
+                    return 2
+                results = sorted(results, key=exchange_score)
                 matches = [
                     {
                         'ticker': r.get('symbol', ''),
