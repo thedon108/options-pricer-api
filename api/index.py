@@ -1,0 +1,246 @@
+from http.server import BaseHTTPRequestHandler
+import json
+import urllib.parse
+import yfinance as yf
+import math
+from datetime import datetime, date
+
+def black_scholes(S, K, T, r, sigma, option_type='call'):
+    if T <= 0 or sigma <= 0:
+        return max(0, S - K) if option_type == 'call' else max(0, K - S)
+    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    nd1 = norm_cdf(d1)
+    nd2 = norm_cdf(d2)
+    nd1_neg = norm_cdf(-d1)
+    nd2_neg = norm_cdf(-d2)
+    if option_type == 'call':
+        price = S * nd1 - K * math.exp(-r * T) * nd2
+    else:
+        price = K * math.exp(-r * T) * nd2_neg - S * nd1_neg
+    delta = nd1 if option_type == 'call' else nd1 - 1
+    gamma = norm_pdf(d1) / (S * sigma * math.sqrt(T))
+    theta = (-(S * norm_pdf(d1) * sigma) / (2 * math.sqrt(T)) - r * K * math.exp(-r * T) * (nd2 if option_type == 'call' else nd2_neg)) / 365
+    vega = S * norm_pdf(d1) * math.sqrt(T) / 100
+    return {'price': round(price, 4), 'delta': round(delta, 4), 'gamma': round(gamma, 6), 'theta': round(theta, 4), 'vega': round(vega, 4)}
+
+def norm_cdf(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+def norm_pdf(x):
+    return math.exp(-0.5 * x ** 2) / math.sqrt(2 * math.pi)
+
+def get_rfr(exchange):
+    rates = {
+        'NMS': None, 'NGM': None, 'NCM': None, 'NYQ': None,  # US - fetch ^IRX
+        'SGX': 0.030,
+        'HKG': 0.040,
+        'LSE': 0.042,
+        'TYO': 0.006,
+        'FRA': 0.025, 'XETR': 0.025,
+    }
+    return rates.get(exchange, None)
+
+def interpolate_iv(iv1, t1, iv2, t2, t):
+    var1 = iv1 ** 2 * t1
+    var2 = iv2 ** 2 * t2
+    var_t = var1 + (var2 - var1) * (t - t1) / (t2 - t1)
+    return math.sqrt(max(var_t, 0) / t) if t > 0 else iv1
+
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+
+        try:
+            path = parsed.path.rstrip('/')
+
+            if path == '/api/quote':
+                ticker = params.get('ticker', [''])[0].upper()
+                t = yf.Ticker(ticker)
+                info = t.fast_info
+                result = {
+                    'ticker': ticker,
+                    'price': round(info.last_price, 2),
+                    'change': round(info.last_price - info.previous_close, 2),
+                    'change_pct': round((info.last_price - info.previous_close) / info.previous_close * 100, 2),
+                    'exchange': info.exchange,
+                    'currency': info.currency,
+                }
+                self.wfile.write(json.dumps(result).encode())
+
+            elif path == '/api/rfr':
+                ticker = params.get('ticker', [''])[0].upper()
+                t = yf.Ticker(ticker)
+                exchange = t.fast_info.exchange
+                rate = get_rfr(exchange)
+                if rate is None:
+                    irx = yf.Ticker('^IRX')
+                    rate = irx.fast_info.last_price / 100
+                self.wfile.write(json.dumps({'rate': round(rate, 4), 'exchange': exchange}).encode())
+
+            elif path == '/api/expiries':
+                ticker = params.get('ticker', [''])[0].upper()
+                t = yf.Ticker(ticker)
+                expiries = list(t.options)
+                self.wfile.write(json.dumps({'expiries': expiries}).encode())
+
+            elif path == '/api/chain':
+                ticker = params.get('ticker', [''])[0].upper()
+                expiry = params.get('expiry', [''])[0]
+                t = yf.Ticker(ticker)
+                opt = t.option_chain(expiry)
+                calls = opt.calls[['strike', 'lastPrice', 'impliedVolatility', 'bid', 'ask']].to_dict('records')
+                puts = opt.puts[['strike', 'lastPrice', 'impliedVolatility', 'bid', 'ask']].to_dict('records')
+                self.wfile.write(json.dumps({'calls': calls, 'puts': puts}).encode())
+
+            elif path == '/api/price':
+                ticker = params.get('ticker', [''])[0].upper()
+                strike_start = float(params.get('strike_start', [0])[0])
+                strike_end = float(params.get('strike_end', [0])[0])
+                strike_interval = float(params.get('strike_interval', [5])[0])
+                expiry_str = params.get('expiry', [''])[0]
+                r = float(params.get('r', [0.045])[0])
+
+                t = yf.Ticker(ticker)
+                S = t.fast_info.last_price
+                expiries = list(t.options)
+
+                target = datetime.strptime(expiry_str, '%Y-%m-%d').date()
+                today = date.today()
+                T = (target - today).days / 365.0
+
+                # Find bracketing expiries
+                expiry_dates = [datetime.strptime(e, '%Y-%m-%d').date() for e in expiries]
+                lower_exp = None
+                upper_exp = None
+                for ed in expiry_dates:
+                    if ed <= target:
+                        lower_exp = ed
+                    elif ed > target and upper_exp is None:
+                        upper_exp = ed
+
+                if lower_exp is None:
+                    lower_exp = expiry_dates[0]
+                if upper_exp is None:
+                    upper_exp = expiry_dates[-1]
+                    lower_exp = expiry_dates[-2] if len(expiry_dates) > 1 else expiry_dates[-1]
+
+                lower_str = lower_exp.strftime('%Y-%m-%d')
+                upper_str = upper_exp.strftime('%Y-%m-%d')
+
+                lower_chain = t.option_chain(lower_str)
+                upper_chain = t.option_chain(upper_str)
+
+                T1 = max((lower_exp - today).days / 365.0, 1/365)
+                T2 = max((upper_exp - today).days / 365.0, 1/365)
+
+                strikes = []
+                k = strike_start
+                while k <= strike_end + 0.001:
+                    strikes.append(round(k, 2))
+                    k += strike_interval
+
+                results_calls = []
+                results_puts = []
+
+                for K in strikes:
+                    # Get IV from lower bracket
+                    lc_row = lower_chain.calls[abs(lower_chain.calls['strike'] - K) < strike_interval / 2]
+                    lp_row = lower_chain.puts[abs(lower_chain.puts['strike'] - K) < strike_interval / 2]
+                    uc_row = upper_chain.calls[abs(upper_chain.calls['strike'] - K) < strike_interval / 2]
+                    up_row = upper_chain.puts[abs(upper_chain.puts['strike'] - K) < strike_interval / 2]
+
+                    def get_iv(rows):
+                        if len(rows) > 0:
+                            iv = rows.iloc[0]['impliedVolatility']
+                            return iv if iv > 0.01 else 0.3
+                        return 0.3
+
+                    def get_market_price(rows):
+                        if len(rows) > 0:
+                            bid = rows.iloc[0].get('bid', 0)
+                            ask = rows.iloc[0].get('ask', 0)
+                            last = rows.iloc[0].get('lastPrice', 0)
+                            if bid > 0 and ask > 0:
+                                return round((bid + ask) / 2, 2)
+                            return round(last, 2)
+                        return None
+
+                    iv1_c = get_iv(lc_row)
+                    iv2_c = get_iv(uc_row)
+                    iv1_p = get_iv(lp_row)
+                    iv2_p = get_iv(up_row)
+
+                    iv_c = interpolate_iv(iv1_c, T1, iv2_c, T2, T)
+                    iv_p = interpolate_iv(iv1_p, T1, iv2_p, T2, T)
+
+                    bs_c = black_scholes(S, K, T, r, iv_c, 'call')
+                    bs_p = black_scholes(S, K, T, r, iv_p, 'put')
+
+                    mp_c = get_market_price(lc_row)
+                    mp_p = get_market_price(lp_row)
+
+                    moneyness = 'ATM' if abs(K - S) / S < 0.02 else ('ITM' if K < S else 'OTM')
+
+                    results_calls.append({
+                        'strike': K,
+                        'moneyness': moneyness,
+                        'bs_price': bs_c['price'],
+                        'market_price': mp_c,
+                        'diff': round(bs_c['price'] - mp_c, 2) if mp_c else None,
+                        'iv': round(iv_c * 100, 2),
+                        'iv_lower': round(iv1_c * 100, 2),
+                        'iv_upper': round(iv2_c * 100, 2),
+                        'delta': bs_c['delta'],
+                        'gamma': bs_c['gamma'],
+                        'theta': bs_c['theta'],
+                        'vega': bs_c['vega'],
+                    })
+
+                    results_puts.append({
+                        'strike': K,
+                        'moneyness': moneyness,
+                        'bs_price': bs_p['price'],
+                        'market_price': mp_p,
+                        'diff': round(bs_p['price'] - mp_p, 2) if mp_p else None,
+                        'iv': round(iv_p * 100, 2),
+                        'iv_lower': round(iv1_p * 100, 2),
+                        'iv_upper': round(iv2_p * 100, 2),
+                        'delta': bs_p['delta'],
+                        'gamma': bs_p['gamma'],
+                        'theta': bs_p['theta'],
+                        'vega': bs_p['vega'],
+                    })
+
+                self.wfile.write(json.dumps({
+                    'calls': results_calls,
+                    'puts': results_puts,
+                    'spot': round(S, 2),
+                    'T': round(T, 4),
+                    'lower_expiry': lower_str,
+                    'upper_expiry': upper_str,
+                }).encode())
+
+            else:
+                self.wfile.write(json.dumps({'error': 'Unknown endpoint'}).encode())
+
+        except Exception as e:
+            self.wfile.write(json.dumps({'error': str(e)}).encode())
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        pass
