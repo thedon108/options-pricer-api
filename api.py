@@ -54,6 +54,7 @@ def get_rfr(exchange):
         # Asia-Pacific
         'TYO':  '^JPN2YT=RR',  # Japan
         'OSA':  '^JPN2YT=RR',
+        'JPX':  '^JPN2YT=RR',  # Japan Exchange Group
         'HKG':  '^HKIBBOR',    # Hong Kong
         'SGX':  '^SGXRATE',    # Singapore
         'ASX':  '^AUDGYIELD',  # Australia
@@ -68,7 +69,7 @@ def get_rfr(exchange):
     fallbacks = {
         'LSE': 0.042, 'FRA': 0.025, 'XETR': 0.025, 'CPH': 0.028,
         'STO': 0.025, 'OSL': 0.040, 'SWX': 0.012, 'VTX': 0.012,
-        'SGX': 0.030, 'HKG': 0.040, 'TYO': 0.005, 'OSA': 0.005,
+        'SGX': 0.030, 'HKG': 0.040, 'TYO': 0.005, 'OSA': 0.005, 'JPX': 0.005,
         'ASX': 0.042, 'NZX': 0.050, 'BSE': 0.065, 'NSE': 0.065,
         'KRX': 0.035, 'TSE': 0.037, 'CNQ': 0.037,
     }
@@ -114,11 +115,14 @@ class handler(BaseHTTPRequestHandler):
                 ticker = params.get('ticker', [''])[0].upper()
                 t = yf.Ticker(ticker)
                 info = t.fast_info
+                price = info.last_price
+                if price is None or not isinstance(price, (int, float)):
+                    raise ValueError(f"Ticker '{ticker}' not found or has no price data")
                 result = {
                     'ticker': ticker,
-                    'price': round(info.last_price, 2),
-                    'change': round(info.last_price - info.previous_close, 2),
-                    'change_pct': round((info.last_price - info.previous_close) / info.previous_close * 100, 2),
+                    'price': round(price, 2),
+                    'change': round(price - info.previous_close, 2),
+                    'change_pct': round((price - info.previous_close) / info.previous_close * 100, 2),
                     'exchange': info.exchange,
                     'currency': info.currency,
                 }
@@ -157,12 +161,19 @@ class handler(BaseHTTPRequestHandler):
                 expiry_str = params.get('expiry', [''])[0]
                 r = float(params.get('r', [0.045])[0])
 
-                t = yf.Ticker(ticker)
-                S = t.fast_info.last_price
-                expiries = list(t.options)
+                if strike_end <= strike_start:
+                    raise ValueError("Strike end must be greater than strike start")
+                if strike_interval <= 0:
+                    raise ValueError("Strike interval must be positive")
 
                 target = datetime.strptime(expiry_str, '%Y-%m-%d').date()
                 today = date.today()
+                if target <= today:
+                    raise ValueError(f"Expiry date {expiry_str} is in the past — please choose a future date")
+
+                t = yf.Ticker(ticker)
+                S = t.fast_info.last_price
+                expiries = list(t.options)
                 T = (target - today).days / 365.0
 
                 # Find bracketing expiries
