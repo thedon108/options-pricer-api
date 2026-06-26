@@ -269,13 +269,22 @@ class handler(BaseHTTPRequestHandler):
                     uc_row = upper_chain.calls[abs(upper_chain.calls['strike'] - K) < strike_interval / 2]
                     up_row = upper_chain.puts[abs(upper_chain.puts['strike'] - K) < strike_interval / 2]
 
-                    def get_iv(rows):
+                    def get_iv(rows, T_bracket, option_type='call'):
                         if len(rows) > 0:
-                            iv = rows.iloc[0]['impliedVolatility']
-                            if iv > 0.01:
-                                return iv, False
-                            return 0.3, True  # fallback
-                        return 0.3, True  # fallback
+                            row = rows.iloc[0]
+                            K_row = float(row['strike'])
+                            bid = float(row.get('bid', 0) or 0)
+                            ask = float(row.get('ask', 0) or 0)
+                            last = float(row.get('lastPrice', 0) or 0)
+                            mid = (bid + ask) / 2 if bid > 0 and ask > 0 else last
+                            if mid > 0:
+                                solved = bs_iv(mid, S, K_row, T_bracket, r, option_type)
+                                if solved and 0.01 < solved < 5:
+                                    return solved, False
+                            yahoo_iv = float(row.get('impliedVolatility', 0) or 0)
+                            if yahoo_iv > 0.01:
+                                return yahoo_iv, False
+                        return 0.3, True
 
                     def get_market_price(rows):
                         if len(rows) > 0:
@@ -287,10 +296,10 @@ class handler(BaseHTTPRequestHandler):
                             return round(last, 2)
                         return None
 
-                    iv1_c, fb1_c = get_iv(lc_row)
-                    iv2_c, fb2_c = get_iv(uc_row)
-                    iv1_p, fb1_p = get_iv(lp_row)
-                    iv2_p, fb2_p = get_iv(up_row)
+                    iv1_c, fb1_c = get_iv(lc_row, T1, 'call')
+                    iv2_c, fb2_c = get_iv(uc_row, T2, 'call')
+                    iv1_p, fb1_p = get_iv(lp_row, T1, 'put')
+                    iv2_p, fb2_p = get_iv(up_row, T2, 'put')
 
                     iv_c = interpolate_iv(iv1_c, T1, iv2_c, T2, T)
                     iv_p = interpolate_iv(iv1_p, T1, iv2_p, T2, T)
