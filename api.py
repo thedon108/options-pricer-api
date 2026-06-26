@@ -35,10 +35,10 @@ def get_rfr(exchange):
     yf_rate_tickers = {
         # North America
         'NMS': '^IRX', 'NGM': '^IRX', 'NCM': '^IRX', 'NYQ': '^IRX',
+        'TOR': '^CA2YT=RR',    # Toronto (Yahoo returns 'TOR')
         # Europe
         'LSE':  '^UKTYIELD',   # UK 2yr gilt
-        'FRA':  '^EUR2YT=RR',  # Eurozone 2yr
-        'XETR': '^EUR2YT=RR',
+        'GER':  '^EUR2YT=RR',  # Frankfurt & Xetra (Yahoo returns 'GER' for .DE stocks)
         'CPH':  '^DKGYIELD',   # Denmark
         'STO':  '^SEKGYIELD',  # Sweden
         'OSL':  '^NOKGYIELD',  # Norway
@@ -46,32 +46,28 @@ def get_rfr(exchange):
         'AMS':  '^EUR2YT=RR',  # Netherlands
         'BRU':  '^EUR2YT=RR',  # Belgium
         'PAR':  '^EUR2YT=RR',  # Paris
+        'YHD':  '^EUR2YT=RR',  # Paris alt (some .PA stocks return 'YHD')
         'MCE':  '^EUR2YT=RR',  # Madrid
         'MIL':  '^EUR2YT=RR',  # Milan
         'VSE':  '^EUR2YT=RR',  # Vienna
-        'SWX':  '^CHFGYIELD',  # Switzerland
-        'VTX':  '^CHFGYIELD',
+        'EBS':  '^CHFGYIELD',  # Switzerland (Yahoo returns 'EBS')
         # Asia-Pacific
-        'TYO':  '^JPN2YT=RR',  # Japan
-        'OSA':  '^JPN2YT=RR',
-        'JPX':  '^JPN2YT=RR',  # Japan Exchange Group
+        'JPX':  '^JPN2YT=RR',  # Japan (Yahoo returns 'JPX' for .T stocks)
         'HKG':  '^HKIBBOR',    # Hong Kong
-        'SGX':  '^SGXRATE',    # Singapore
+        'SES':  '^SGXRATE',    # Singapore (Yahoo returns 'SES')
         'ASX':  '^AUDGYIELD',  # Australia
-        'NZX':  '^NZDGYIELD',  # New Zealand
+        'NZE':  '^NZDGYIELD',  # New Zealand (Yahoo returns 'NZE')
         'BSE':  '^INRGYIELD',  # India BSE
-        'NSE':  '^INRGYIELD',  # India NSE
-        'KRX':  '^KR2YT=RR',   # South Korea
-        'TSE':  '^CA2YT=RR',   # Toronto
-        'CNQ':  '^CA2YT=RR',   # Canada
+        'NSI':  '^INRGYIELD',  # India NSE (Yahoo returns 'NSI')
+        'KSC':  '^KR2YT=RR',   # South Korea (Yahoo returns 'KSC')
     }
     # Hardcoded fallbacks if live fetch fails
     fallbacks = {
-        'LSE': 0.042, 'FRA': 0.025, 'XETR': 0.025, 'CPH': 0.028,
-        'STO': 0.025, 'OSL': 0.040, 'SWX': 0.012, 'VTX': 0.012,
-        'SGX': 0.030, 'HKG': 0.040, 'TYO': 0.005, 'OSA': 0.005, 'JPX': 0.005,
-        'ASX': 0.042, 'NZX': 0.050, 'BSE': 0.065, 'NSE': 0.065,
-        'KRX': 0.035, 'TSE': 0.037, 'CNQ': 0.037,
+        'LSE': 0.042, 'GER': 0.025, 'CPH': 0.028,
+        'STO': 0.025, 'OSL': 0.040, 'EBS': 0.012,
+        'SES': 0.030, 'HKG': 0.040, 'JPX': 0.005,
+        'ASX': 0.042, 'NZE': 0.050, 'BSE': 0.065, 'NSI': 0.065,
+        'KSC': 0.035, 'TOR': 0.037,
     }
     ticker = yf_rate_tickers.get(exchange)
     if ticker:
