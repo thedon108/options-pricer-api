@@ -7,7 +7,8 @@ from datetime import datetime, date
 
 def black_scholes(S, K, T, r, sigma, option_type='call'):
     if T <= 0 or sigma <= 0:
-        return max(0, S - K) if option_type == 'call' else max(0, K - S)
+        price = max(0, S - K) if option_type == 'call' else max(0, K - S)
+        return {'price': price, 'delta': 1.0 if option_type == 'call' else -1.0, 'gamma': 0.0, 'theta': 0.0, 'vega': 0.0}
     d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
     d2 = d1 - sigma * math.sqrt(T)
     nd1 = norm_cdf(d1)
@@ -90,18 +91,16 @@ def bs_iv(market_price, S, K, T, r, option_type='call', tol=1e-6, max_iter=100):
     """Bisection solver: back out IV from market price using Black-Scholes."""
     if T <= 0 or market_price <= 0:
         return None
-    # Intrinsic value check
-    intrinsic = max(S - K, 0) if option_type == 'call' else max(K - S, 0)
-    if market_price <= intrinsic:
+    # European lower bound (not American intrinsic — European put can price below K-S)
+    disc = math.exp(-r * T)
+    lower_bound = max(S - K * disc, 0) if option_type == 'call' else max(K * disc - S, 0)
+    if market_price <= lower_bound:
         return None
     lo, hi = 0.001, 10.0  # 0.1% to 1000%
     for _ in range(max_iter):
         mid = (lo + hi) / 2
         bs = black_scholes(S, K, T, r, mid, option_type)
-        if isinstance(bs, dict):
-            price = bs['price']
-        else:
-            price = bs
+        price = bs['price'] if isinstance(bs, dict) else bs
         if abs(price - market_price) < tol:
             return mid
         if price < market_price:
