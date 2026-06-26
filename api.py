@@ -217,7 +217,12 @@ class handler(BaseHTTPRequestHandler):
                     raise ValueError(f"Expiry date {expiry_str} is in the past — please choose a future date")
 
                 t = yf.Ticker(ticker)
-                S = t.fast_info.last_price
+                try:
+                    S = t.fast_info.last_price
+                except (KeyError, TypeError, AttributeError):
+                    raise ValueError(f"Ticker '{ticker}' not found — please check the symbol")
+                if S is None or not isinstance(S, (int, float)):
+                    raise ValueError(f"Ticker '{ticker}' not found — please check the symbol")
                 expiries = list(t.options)
                 if not expiries:
                     raise ValueError(f"No listed options found for '{ticker}'")
