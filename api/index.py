@@ -293,6 +293,29 @@ class handler(BaseHTTPRequestHandler):
                     'upper_expiry': upper_str,
                 }).encode())
 
+            elif path == '/api/fx':
+                from_currency = params.get('currency', ['USD'])[0]
+                if from_currency == 'USD':
+                    self.wfile.write(json.dumps({'rate': 1.0, 'from': 'USD', 'to': 'USD'}).encode())
+                else:
+                    base = 'GBP' if from_currency == 'GBp' else from_currency
+                    divisor = 100 if from_currency == 'GBp' else 1
+                    fallbacks = {
+                        'GBP': 1.27, 'EUR': 1.08, 'JPY': 0.0065, 'CHF': 1.10,
+                        'AUD': 0.64, 'CAD': 0.73, 'HKD': 0.128, 'SGD': 0.74,
+                        'NZD': 0.60, 'SEK': 0.093, 'NOK': 0.092, 'DKK': 0.144,
+                        'INR': 0.012, 'KRW': 0.00073,
+                    }
+                    try:
+                        rate = yf.Ticker(f'{base}USD=X').fast_info.last_price
+                        if rate and rate > 0:
+                            self.wfile.write(json.dumps({'rate': round(rate / divisor, 6), 'from': from_currency, 'to': 'USD'}).encode())
+                            return
+                    except Exception:
+                        pass
+                    fb = fallbacks.get(base, 1.0)
+                    self.wfile.write(json.dumps({'rate': round(fb / divisor, 6), 'from': from_currency, 'to': 'USD'}).encode())
+
             elif path == '/api/search':
                 q = params.get('q', [''])[0].strip()
                 if not q:
