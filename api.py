@@ -376,6 +376,75 @@ class handler(BaseHTTPRequestHandler):
                     fb = fallbacks.get(base, 1.0)
                     self.wfile.write(json.dumps({'rate': round(fb / divisor, 6), 'from': from_currency, 'to': 'USD'}).encode())
 
+            elif path == '/api/hv':
+                ticker = params.get('ticker', [''])[0].strip().upper()
+                if not ticker:
+                    raise ValueError("Missing ticker")
+                t = yf.Ticker(ticker)
+                hist = t.history(period='1y', interval='1d', auto_adjust=True)
+                if hist.empty or len(hist) < 32:
+                    raise ValueError(f"Insufficient price history for '{ticker}'")
+                closes = hist['Close'].dropna()
+                import numpy as np
+                log_rets = np.log(closes / closes.shift(1)).dropna()
+                hv20  = log_rets.rolling(20).std()  * math.sqrt(252)
+                hv30  = log_rets.rolling(30).std()  * math.sqrt(252)
+                hv60  = log_rets.rolling(60).std()  * math.sqrt(252)
+                valid = hv30.dropna()
+                dates  = [d.strftime('%Y-%m-%d') for d in valid.index]
+                hv30_s = [round(float(v), 4) for v in valid.values]
+                cur_hv20 = round(float(hv20.dropna().iloc[-1]), 4) if len(hv20.dropna()) else None
+                cur_hv30 = round(float(hv30.dropna().iloc[-1]), 4) if len(hv30.dropna()) else None
+                cur_hv60 = round(float(hv60.dropna().iloc[-1]), 4) if len(hv60.dropna()) else None
+                atm_iv = None
+                try:
+                    spot = float(t.fast_info.last_price)
+                    expiries = t.options
+                    if expiries:
+                        exp = expiries[0]
+                        chain = t.option_chain(exp)
+                        calls = chain.calls
+                        if not calls.empty:
+                            atm_row = calls.iloc[(calls['strike'] - spot).abs().argsort()[:1]]
+                            row = atm_row.iloc[0]
+                            K = float(row['strike'])
+                            today = date.today()
+                            exp_date = datetime.strptime(exp, '%Y-%m-%d').date()
+                            T = max((exp_date - today).days, 1) / 365.0
+                            exch = t.fast_info.exchange
+                            r = 0.0
+                            try:
+                                rfr_ticker = get_rfr(exch)
+                                rfr_t = yf.Ticker(rfr_ticker)
+                                rfr_price = rfr_t.fast_info.last_price
+                                r = float(rfr_price) / 100.0
+                            except Exception:
+                                r = 0.04
+                            bid = float(row.get('bid', 0) or 0)
+                            ask = float(row.get('ask', 0) or 0)
+                            last = float(row.get('lastPrice', 0) or 0)
+                            mid = (bid + ask) / 2 if bid > 0 and ask > 0 else last
+                            if mid > 0:
+                                solved = bs_iv(mid, spot, K, T, r, 'call')
+                                if solved and 0.01 < solved < 5:
+                                    atm_iv = round(solved, 4)
+                            if atm_iv is None:
+                                yahoo_iv = float(row.get('impliedVolatility', 0) or 0)
+                                if yahoo_iv > 0.01:
+                                    atm_iv = round(yahoo_iv, 4)
+                except Exception:
+                    pass
+                self.wfile.write(json.dumps({
+                    'ticker': ticker,
+                    'dates': dates,
+                    'hv30': hv30_s,
+                    'hv20_current': cur_hv20,
+                    'hv30_current': cur_hv30,
+                    'hv60_current': cur_hv60,
+                    'atm_iv': atm_iv,
+                    'iv_premium': round(atm_iv - cur_hv30, 4) if atm_iv and cur_hv30 else None,
+                }).encode())
+
             elif path == '/api/search':
                 q = params.get('q', [''])[0].strip()
                 if not q:
