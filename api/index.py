@@ -86,6 +86,30 @@ def get_rfr(exchange):
     except Exception:
         return 0.045
 
+def bs_iv(market_price, S, K, T, r, option_type='call', tol=1e-6, max_iter=100):
+    """Bisection solver: back out IV from market price using Black-Scholes."""
+    if T <= 0 or market_price <= 0:
+        return None
+    # Intrinsic value check
+    intrinsic = max(S - K, 0) if option_type == 'call' else max(K - S, 0)
+    if market_price <= intrinsic:
+        return None
+    lo, hi = 0.001, 10.0  # 0.1% to 1000%
+    for _ in range(max_iter):
+        mid = (lo + hi) / 2
+        bs = black_scholes(S, K, T, r, mid, option_type)
+        if isinstance(bs, dict):
+            price = bs['price']
+        else:
+            price = bs
+        if abs(price - market_price) < tol:
+            return mid
+        if price < market_price:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
 def interpolate_iv(iv1, t1, iv2, t2, t):
     var1 = iv1 ** 2 * t1
     var2 = iv2 ** 2 * t2
@@ -146,11 +170,38 @@ class handler(BaseHTTPRequestHandler):
             elif path == '/api/chain':
                 ticker = params.get('ticker', [''])[0].upper()
                 expiry = params.get('expiry', [''])[0]
+                r_chain = float(params.get('r', [0.045])[0])
                 t = yf.Ticker(ticker)
+                S = t.fast_info.last_price
+                T_chain = max((datetime.strptime(expiry, '%Y-%m-%d').date() - date.today()).days / 365.0, 1/365)
                 opt = t.option_chain(expiry)
-                calls = opt.calls[['strike', 'lastPrice', 'impliedVolatility', 'bid', 'ask']].to_dict('records')
-                puts = opt.puts[['strike', 'lastPrice', 'impliedVolatility', 'bid', 'ask']].to_dict('records')
-                self.wfile.write(json.dumps({'calls': calls, 'puts': puts}).encode())
+
+                def enrich(rows, option_type):
+                    out = []
+                    for _, row in rows.iterrows():
+                        K = float(row['strike'])
+                        bid = float(row.get('bid', 0) or 0)
+                        ask = float(row.get('ask', 0) or 0)
+                        last = float(row.get('lastPrice', 0) or 0)
+                        mid = (bid + ask) / 2 if bid > 0 and ask > 0 else last
+                        yahoo_iv = float(row.get('impliedVolatility', 0) or 0)
+                        # Solve IV from market price
+                        solved = bs_iv(mid, S, K, T_chain, r_chain, option_type) if mid > 0 else None
+                        iv = solved if solved and 0.01 < solved < 5 else (yahoo_iv if yahoo_iv > 0.01 else None)
+                        out.append({
+                            'strike': K,
+                            'lastPrice': round(last, 4),
+                            'bid': round(bid, 4),
+                            'ask': round(ask, 4),
+                            'mid': round(mid, 4),
+                            'impliedVolatility': round(iv, 6) if iv else 0,
+                            'iv_solved': solved is not None and 0.01 < solved < 5,
+                        })
+                    return out
+
+                calls = enrich(opt.calls, 'call')
+                puts = enrich(opt.puts, 'put')
+                self.wfile.write(json.dumps({'calls': calls, 'puts': puts, 'spot': round(S, 2)}).encode())
 
             elif path == '/api/price':
                 ticker = params.get('ticker', [''])[0].upper()
