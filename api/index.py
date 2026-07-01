@@ -109,6 +109,28 @@ def bs_iv(market_price, S, K, T, r, option_type='call', tol=1e-6, max_iter=100):
             hi = mid
     return (lo + hi) / 2
 
+def price_eko_call(S, K_strike, K_barrier, T, r, sigma):
+    """
+    European at-expiry knockout call: pays max(S-K_strike,0) but knocks out if S >= K_barrier at expiry.
+    Decomposition:
+      long  call @ K_strike
+      short call @ K_barrier
+      short digital call @ K_barrier paying (K_barrier - K_strike)
+    The digital leg value = (K_barrier - K_strike) * e^(-rT) * N(d2_barrier).
+    """
+    if K_barrier <= K_strike:
+        raise ValueError("Barrier must be above strike")
+    long_call  = black_scholes(S, K_strike,  T, r, sigma, 'call')['price']
+    short_call = black_scholes(S, K_barrier, T, r, sigma, 'call')['price']
+    # d2 for the barrier strike (used to price the digital leg)
+    if T > 0 and sigma > 0:
+        d2_b = (math.log(S / K_barrier) + (r - 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    else:
+        d2_b = -1e9  # deep OTM / expired
+    digital = (K_barrier - K_strike) * math.exp(-r * T) * norm_cdf(d2_b)
+    price = long_call - short_call - digital
+    return round(max(price, 0), 4)
+
 def interpolate_iv(iv1, t1, iv2, t2, t):
     var1 = iv1 ** 2 * t1
     var2 = iv2 ** 2 * t2
@@ -454,6 +476,78 @@ class handler(BaseHTTPRequestHandler):
                     'hv60_current': cur_hv60,
                     'atm_iv': atm_iv,
                     'iv_premium': round(atm_iv - cur_hv30, 4) if atm_iv and cur_hv30 else None,
+                }).encode())
+
+            elif path == '/api/eko':
+                ticker   = params.get('ticker',  [''])[0].strip().upper()
+                K_strike  = float(params.get('strike',  [0])[0])
+                K_barrier = float(params.get('barrier', [0])[0])
+                expiry_str = params.get('expiry', [''])[0]
+                if not ticker:
+                    raise ValueError("Missing ticker")
+                if K_strike <= 0 or K_barrier <= 0:
+                    raise ValueError("Strike and barrier must be positive")
+                if K_barrier <= K_strike:
+                    raise ValueError("Barrier must be above strike for an EKO call")
+
+                t = yf.Ticker(ticker)
+                S = float(t.fast_info.last_price)
+                exch = t.fast_info.exchange
+                r_eko = get_rfr(exch)
+
+                # Resolve T
+                if expiry_str:
+                    exp_date = datetime.strptime(expiry_str, '%Y-%m-%d').date()
+                    T_eko = max((exp_date - date.today()).days / 365.0, 1/365)
+                else:
+                    T_eko = 1.0  # default 1 year
+
+                # Solve ATM IV from nearest-expiry chain
+                iv_eko = 0.3  # fallback
+                iv_source = 'fallback'
+                try:
+                    expiries = t.options
+                    if expiries:
+                        exp0 = expiries[0]
+                        chain0 = t.option_chain(exp0)
+                        calls0 = chain0.calls
+                        if not calls0.empty:
+                            atm_row = calls0.iloc[(calls0['strike'] - S).abs().argsort()[:1]].iloc[0]
+                            K0 = float(atm_row['strike'])
+                            exp0_date = datetime.strptime(exp0, '%Y-%m-%d').date()
+                            T0 = max((exp0_date - date.today()).days, 1) / 365.0
+                            bid0 = float(atm_row.get('bid', 0) or 0)
+                            ask0 = float(atm_row.get('ask', 0) or 0)
+                            last0 = float(atm_row.get('lastPrice', 0) or 0)
+                            mid0 = (bid0 + ask0) / 2 if bid0 > 0 and ask0 > 0 else last0
+                            if mid0 > 0:
+                                solved = bs_iv(mid0, S, K0, T0, r_eko, 'call')
+                                if solved and 0.01 < solved < 5:
+                                    iv_eko = solved
+                                    iv_source = 'bs_solved'
+                            if iv_source == 'fallback':
+                                yiv = float(atm_row.get('impliedVolatility', 0) or 0)
+                                if yiv > 0.01:
+                                    iv_eko = yiv
+                                    iv_source = 'yahoo'
+                except Exception:
+                    pass
+
+                eko_price = price_eko_call(S, K_strike, K_barrier, T_eko, r_eko, iv_eko)
+                vanilla_price = black_scholes(S, K_strike, T_eko, r_eko, iv_eko, 'call')['price']
+
+                self.wfile.write(json.dumps({
+                    'ticker':        ticker,
+                    'spot':          round(S, 4),
+                    'strike':        K_strike,
+                    'barrier':       K_barrier,
+                    'T':             round(T_eko, 4),
+                    'r':             round(r_eko, 4),
+                    'iv':            round(iv_eko, 4),
+                    'iv_source':     iv_source,
+                    'eko_price':     eko_price,
+                    'vanilla_price': vanilla_price,
+                    'ko_discount':   round(vanilla_price - eko_price, 4),
                 }).encode())
 
             elif path == '/api/search':
